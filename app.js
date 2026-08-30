@@ -4,7 +4,7 @@ const defaultState={
   players:["","","",""],playerCount:4,companyMode:false,rate:50,
   currentMatches:[],history:[],currentView:"home",selectedHistoryId:null,selectedPerson:null
 };
-let state=loadState(),calcContext=null,calcText="0";
+let state=loadState(),calcContext=null,calcText="0",activeNameInput=null;
 
 function clone(x){return JSON.parse(JSON.stringify(x))}
 function localDateString(d=new Date()){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`}
@@ -147,9 +147,61 @@ function deleteHistory(id){
   state.history=state.history.filter(h=>h.id!==id);state.selectedHistoryId=null;state.currentView="history";save();render();
 }
 function startNew(){
+  activeNameInput=null;
   const names=state.players.slice(0,state.playerCount).map(x=>x.trim());
   if(names.some(x=>!x)){alert("参加者名を入力してください。");return}
   state.players=names;state.currentMatches=[];addMatch();state.currentView="game";
+}
+function allParticipantNames(){
+  const seen=new Set(),out=[];
+  for(const h of state.history){
+    for(const name of (h.playerNames||[])){
+      const clean=String(name||"").trim();
+      if(clean && !seen.has(clean)){seen.add(clean);out.push(clean);}
+    }
+  }
+  return out;
+}
+function participantSuggestions(query,index){
+  const q=String(query||"").trim().toLowerCase();
+  const current=new Set(state.players.map((n,i)=>i===index?"":String(n||"").trim()).filter(Boolean));
+  const names=allParticipantNames().filter(name=>!current.has(name));
+  if(!q)return names.slice(0,8);
+  return names.filter(name=>name.toLowerCase().includes(q)).slice(0,8);
+}
+function recentGroupSuggestions(){
+  const groups=[];
+  const seen=new Set();
+  for(const h of state.history){
+    if(!Array.isArray(h.playerNames)||h.playerNames.length<2)continue;
+    const names=h.playerNames.map(n=>String(n||"").trim()).filter(Boolean);
+    if(names.length<2)continue;
+    const key=names.join("\\u0001");
+    if(seen.has(key))continue;
+    seen.add(key);
+    groups.push(names);
+    if(groups.length>=5)break;
+  }
+  return groups;
+}
+function renderNameSuggestions(index,query){
+  const list=participantSuggestions(query,index);
+  if(!list.length)return "";
+  return `<div class="name-suggestions">
+    ${list.map(name=>`<button type="button" class="name-suggestion" data-suggestion-index="${index}" data-suggestion-name="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join("")}
+  </div>`;
+}
+function applyParticipantSuggestion(index,name){
+  state.players[index]=name;
+  activeNameInput=null;
+  save();render();
+}
+function applyGroupSuggestion(names){
+  const n=state.playerCount;
+  state.players=names.slice(0,n);
+  while(state.players.length<n)state.players.push("");
+  activeNameInput=null;
+  save();render();
 }
 function people(){
   const set=new Set();state.history.forEach(h=>h.playerNames.forEach(n=>{if(n)set.add(n)}));return [...set].sort((a,b)=>a.localeCompare(b,"ja"));
@@ -181,7 +233,16 @@ function renderHome(){
   return `<section class="card">${navTabs("home")}<h2 class="section-title">新しい対局</h2><div class="form-grid">
     <div><div class="small-note">対局人数</div><div class="segmented"><button class="${state.playerCount===3?"active":""}" data-count="3">3人打ち</button><button class="${state.playerCount===4?"active":""}" data-count="4">4人打ち</button></div></div>
     ${state.playerCount===4?`<label class="setting-row" style="padding:8px 0;border:0"><span>会社モード</span><input id="newCompanyMode" type="checkbox" ${state.companyMode?"checked":""}></label>`:""}
-    <div><div class="small-note">参加者名</div><div class="name-grid">${state.players.slice(0,state.playerCount).map((n,i)=>`<input class="name-input" data-index="${i}" value="${escapeHtml(n)}" placeholder="${i+1}人目">`).join("")}</div></div>
+    <div>
+      <div class="small-note">参加者名</div>
+      <div class="name-grid">
+        ${state.players.slice(0,state.playerCount).map((n,i)=>`<div class="name-field-wrap">
+          <input class="name-input" data-index="${i}" value="${escapeHtml(n)}" placeholder="${i+1}人目" autocomplete="off">
+          ${activeNameInput===i?renderNameSuggestions(i,n):""}
+        </div>`).join("")}
+      </div>
+      ${recentGroupSuggestions().length?`<div class="recent-group-wrap"><div class="small-note">過去の組み合わせ</div><div class="recent-group-list">${recentGroupSuggestions().slice(0,3).map((names,i)=>`<button type="button" class="recent-group-btn" data-group-index="${i}">${escapeHtml(names.join("・"))}</button>`).join("")}</div></div>`:""}
+    </div>
     <button id="startBtn" class="primary-btn">対局を開始</button>
   </div></section>`;
 }
@@ -323,9 +384,37 @@ function render(){
   document.getElementById("app").innerHTML=html;bind();
 }
 function bind(){
-  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{state.currentView=b.dataset.view;state.selectedHistoryId=null;state.selectedPerson=null;save();render()});
+  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{activeNameInput=null;state.currentView=b.dataset.view;state.selectedHistoryId=null;state.selectedPerson=null;save();render()});
   document.querySelectorAll("[data-count]").forEach(b=>b.onclick=()=>setPlayerCount(Number(b.dataset.count)));
-  document.querySelectorAll(".name-input").forEach(i=>i.oninput=()=>{state.players[Number(i.dataset.index)]=i.value;save()});
+  document.querySelectorAll(".name-input").forEach(i=>{
+    i.onfocus=()=>{
+      activeNameInput=Number(i.dataset.index);
+      render();
+      requestAnimationFrame(()=>{
+        const el=document.querySelector(`.name-input[data-index="${activeNameInput}"]`);
+        if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}
+      });
+    };
+    i.oninput=()=>{
+      const idx=Number(i.dataset.index);
+      state.players[idx]=i.value;
+      activeNameInput=idx;
+      save();
+      render();
+      requestAnimationFrame(()=>{
+        const el=document.querySelector(`.name-input[data-index="${idx}"]`);
+        if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}
+      });
+    };
+  });
+  document.querySelectorAll(".name-suggestion").forEach(b=>b.onclick=()=>{
+    applyParticipantSuggestion(Number(b.dataset.suggestionIndex),b.dataset.suggestionName);
+  });
+  document.querySelectorAll(".recent-group-btn").forEach(b=>b.onclick=()=>{
+    const groups=recentGroupSuggestions();
+    const idx=Number(b.dataset.groupIndex);
+    if(groups[idx])applyGroupSuggestion(groups[idx]);
+  });
   const nc=document.getElementById("newCompanyMode");if(nc)nc.onchange=()=>setCompany(nc.checked);
   const start=document.getElementById("startBtn");if(start)start.onclick=startNew;
   const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>{state.currentMatches=[];state.currentView="home";save();render()};

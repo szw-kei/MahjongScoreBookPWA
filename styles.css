@@ -136,3 +136,28 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   .metric-card{padding:6px 7px}.metric-card strong{font-size:16px}
   .person-total-row strong{font-size:16px}
 }
+
+/* Participant input assistance */
+.name-field-wrap{position:relative;min-width:0}
+.name-suggestions{
+  position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:40;
+  background:#fff;border:1px solid #cfdcd6;border-radius:10px;
+  box-shadow:0 8px 20px rgba(20,50,40,.12);overflow:hidden
+}
+.name-suggestion{
+  display:block;width:100%;border:0;border-bottom:1px solid #edf2ef;
+  background:#fff;color:#18332b;text-align:left;padding:10px 12px;font-size:14px
+}
+.name-suggestion:last-child{border-bottom:0}
+.name-suggestion:active{background:#e8f0ec}
+.recent-group-wrap{margin-top:9px}
+.recent-group-list{display:flex;flex-wrap:wrap;gap:6px}
+.recent-group-btn{
+  border:1px solid #c9d7d1;background:#f7faf8;color:#315548;
+  border-radius:999px;padding:6px 9px;font-size:11px;font-weight:700
+}
+.recent-group-btn:active{background:#e8f0ec}
+@media(max-width:380px){
+  .name-suggestion{padding:9px 10px;font-size:13px}
+  .recent-group-btn{font-size:10px}
+}
