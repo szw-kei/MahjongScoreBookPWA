@@ -4,7 +4,7 @@ const defaultState={
   players:["","","",""],playerCount:4,companyMode:false,rate:50,
   currentMatches:[],history:[],currentView:"home",selectedHistoryId:null,selectedPerson:null
 };
-let state=loadState(),calcContext=null,calcText="0",activeNameInput=null;
+let state=loadState(),calcContext=null,calcText="0",activeNameInput=null,editHistoryId=null;
 
 function clone(x){return JSON.parse(JSON.stringify(x))}
 function localDateString(d=new Date()){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`}
@@ -139,6 +139,7 @@ function finishGame(){
   state.history.unshift(item);state.currentMatches=[];state.currentView="home";save();render();
 }
 function resetParticipants(){
+  if(!confirm("現在の参加者名を入力欄から消します。過去の対局履歴や参加者候補は削除しません。よろしいですか？"))return;
   state.players=["","","",""];
   activeNameInput=null;
   save();render();
@@ -155,11 +156,81 @@ function discardCurrentGame(){
   activeNameInput=null;
   save();render();
 }
+function editHistory(id){
+  const h=state.history.find(x=>x.id===id);
+  if(!h)return;
+  state.playerCount=h.playerCount;
+  state.players=h.playerNames.slice();
+  while(state.players.length<4)state.players.push("");
+  state.currentMatches=h.matches.map(r=>({
+    scores:r.scores.map(Number),
+    uma:r.uma.map(Number)
+  }));
+  editHistoryId=id;
+  state.currentView="game";
+  activeNameInput=null;
+  save();render();
+}
+function saveEditedHistory(){
+  if(!editHistoryId){
+    finishGame();
+    return;
+  }
+  const h=state.history.find(x=>x.id===editHistoryId);
+  if(!h)return;
+  const n=state.playerCount;
+  const valid=state.currentMatches.length>0 && state.currentMatches.every(r=>{
+    ensureRow(r,n,state.companyMode);
+    const scoreOK=r.scores.every(v=>Number.isFinite(Number(v))) &&
+      Math.abs(r.scores.reduce((a,v)=>a+(Number(v)||0),0))<1e-9;
+    const umaOK=r.uma.every(v=>Number.isFinite(Number(v))) &&
+      Math.abs(r.uma.reduce((a,v)=>a+(Number(v)||0),0))<1e-9;
+    return scoreOK && umaOK;
+  });
+  if(!valid){
+    alert("未入力または合計が0でない半荘があります。すべて確認してください。");
+    return;
+  }
+  const savedMatches=state.currentMatches.map(r=>({
+    scores:r.scores.map(Number),
+    uma:r.uma.map(Number)
+  }));
+  const savedTotals=totalsForRows(savedMatches,h.playerCount===4);
+  h.playerCount=n;
+  h.playerNames=state.players.slice(0,n);
+  h.matches=savedMatches;
+  // Do not persist company mode or multiplier.
+  h.income=savedTotals.income.map(Number);
+  // Recalculate derived history fields.
+  normalizeHistoryItemForEdit(h);
+  state.currentMatches=[];
+  state.currentView="history";
+  state.selectedHistoryId=h.id;
+  editHistoryId=null;
+  activeNameInput=null;
+  save();render();
+}
+function normalizeHistoryItemForEdit(h){
+  h.playerCount=h.playerCount===3?3:4;
+  h.playerNames=(h.playerNames||[]).slice(0,h.playerCount);
+  h.matches=(h.matches||[]).map(r=>({
+    scores:Array.from({length:h.playerCount},(_,i)=>Number(r.scores?.[i])||0),
+    uma:Array.from({length:h.playerCount},(_,i)=>Number(r.uma?.[i])||0)
+  }));
+  const scores=Array(h.playerCount).fill(0);
+  const umas=Array(h.playerCount).fill(0);
+  h.matches.forEach(r=>{
+    r.scores.forEach((v,i)=>scores[i]+=Number(v)||0);
+    r.uma.forEach((v,i)=>umas[i]+=Number(v)||0);
+  });
+  h.income=Array.isArray(h.income)?h.income.slice(0,h.playerCount):null;
+}
 function deleteHistory(id){
   if(!confirm("この対局記録を削除しますか？"))return;
   state.history=state.history.filter(h=>h.id!==id);state.selectedHistoryId=null;state.currentView="history";save();render();
 }
 function startNew(){
+  editHistoryId=null;
   activeNameInput=null;
   const names=state.players.slice(0,state.playerCount).map(x=>x.trim());
   if(names.some(x=>!x)){alert("参加者名を入力してください。");return}
@@ -276,8 +347,8 @@ function renderGame(){
   return `<section class="card"><div class="detail-head"><button class="back-btn" id="backHome">‹ 保存せず終了</button><div><strong>対局成績</strong><div class="muted">${state.companyMode?"4人打ち・会社モード":`${n}人打ち`}</div></div></div>
     <div class="table-wrap"><table class="score-table">${thead}<tbody>${body}</tbody></table></div>
     <button id="addMatchBtn" class="secondary-btn add-row">＋ 半荘を追加</button>
-    <button id="finishGameBtn" class="primary-btn add-row">対局を記録する</button>
-    <div class="small-note">1人分だけ空欄にすると、そのセルをタップして自動計算します。入力済みの修正でも合計0に調整します。</div></section>
+    ${editHistoryId?`<button id="saveEditBtn" class="primary-btn add-row">編集内容を保存</button>`:`<button id="finishGameBtn" class="primary-btn add-row">対局を記録する</button>`}
+    <div class="small-note">${editHistoryId?"過去の対局を編集中です。":"1人分だけ空欄にすると、そのセルをタップして自動計算します。"} 入力済みの修正でも合計0に調整します。</div></section>
     <div class="totals-sticky"><div class="totals-inner">${renderCurrentTotals(t,names)}</div></div>`;
 }
 function renderCurrentTotals(t,names){
@@ -303,6 +374,7 @@ function renderHistoryDetail(){
     <div class="table-wrap"><table class="score-table"><thead><tr><th class="row-label">半荘</th>${names.map(n=>`<th><span class="player-head-name">${escapeHtml(n)}</span><span class="player-head-sub"><span>ウマ</span><span>スコア</span></span></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
     <div class="history-player-grid">${names.map((n,i)=>`<div class="history-player-card"><h4>${escapeHtml(n)}</h4><div class="stat-grid"><span>ウマ</span><strong class="${colorClass(totals[i].uma)}">${formatUma(totals[i].uma)}</strong><span>スコア</span><strong>${formatNumber(totals[i].score)}</strong><span>合計</span><strong>${formatNumber(totals[i].score+totals[i].uma*5)}</strong><span>収支</span><strong>${totals[i].income===null?"—":formatMoney(totals[i].income)}</strong></div></div>`).join("")}</div>
     ${Array.isArray(h.income)&&h.income.some(v=>v===null)?`<div class="small-note">— は収支保存機能追加前の記録です。</div>`:""}
+    <button class="primary-btn add-row" id="editHistoryBtn">この対局を編集</button>
     <button class="danger-btn" id="deleteHistoryBtn">この対局記録を削除</button></section>`;
 }
 function renderPeople(){
@@ -436,10 +508,13 @@ function bind(){
   });
   const nc=document.getElementById("newCompanyMode");if(nc)nc.onchange=()=>setCompany(nc.checked);
   const start=document.getElementById("startBtn");if(start)start.onclick=startNew;
-  const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>discardCurrentGame();
+  const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>{if(editHistoryId){state.currentMatches=[];state.currentView="history";state.selectedHistoryId=editHistoryId;editHistoryId=null;save();render();}else discardCurrentGame();};
   document.querySelectorAll(".cell-btn[data-kind]").forEach(b=>b.onclick=()=>{const mi=Number(b.dataset.mi),pi=Number(b.dataset.pi),kind=b.dataset.kind,row=state.currentMatches[mi];const blanks=row[kind].map((v,i)=>String(v).trim()===""?i:null).filter(i=>i!==null);if(blanks.length===1&&blanks[0]===pi){autoFill(mi,kind,pi)}else openCalc(mi,pi,kind)});
   const add=document.getElementById("addMatchBtn");if(add)add.onclick=addMatch;
   const finish=document.getElementById("finishGameBtn");if(finish)finish.onclick=finishGame;
+  const saveEdit=document.getElementById("saveEditBtn");if(saveEdit)saveEdit.onclick=saveEditedHistory;
+  const editHistoryBtn=document.getElementById("editHistoryBtn");if(editHistoryBtn)editHistoryBtn.onclick=()=>editHistory(state.selectedHistoryId);
+
   document.querySelectorAll("[data-history-id]").forEach(b=>b.onclick=()=>{state.selectedHistoryId=b.dataset.historyId;state.currentView="history";save();render()});
   const bh=document.getElementById("backHistory");if(bh)bh.onclick=()=>{state.selectedHistoryId=null;render()};
   const dh=document.getElementById("deleteHistoryBtn");if(dh)dh.onclick=()=>deleteHistory(state.selectedHistoryId);
