@@ -138,9 +138,22 @@ function finishGame(){
   };
   state.history.unshift(item);state.currentMatches=[];state.currentView="home";save();render();
 }
+function resetParticipants(){
+  state.players=["","","",""];
+  activeNameInput=null;
+  save();render();
+}
 function resetAll(){
   if(!confirm("現在の対局、過去の対局、参加者名をすべて削除します。よろしいですか？"))return;
   state=clone(defaultState);save();render();document.getElementById("settingsDialog").close();
+}
+function discardCurrentGame(){
+  if(!state.currentMatches.length){state.currentView="home";save();render();return}
+  if(!confirm("現在の対局を保存せず終了します。入力中の内容は失われます。よろしいですか？"))return;
+  state.currentMatches=[];
+  state.currentView="home";
+  activeNameInput=null;
+  save();render();
 }
 function deleteHistory(id){
   if(!confirm("この対局記録を削除しますか？"))return;
@@ -191,6 +204,16 @@ function renderNameSuggestions(index,query){
     ${list.map(name=>`<button type="button" class="name-suggestion" data-suggestion-index="${index}" data-suggestion-name="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join("")}
   </div>`;
 }
+function updateSuggestionPopup(input){
+  const wrap=input.closest(".name-field-wrap");
+  if(!wrap)return;
+  const index=Number(input.dataset.index);
+  const holder=wrap.querySelector(".name-suggestions-holder");
+  if(holder)holder.innerHTML=renderNameSuggestions(index,input.value);
+  wrap.querySelectorAll(".name-suggestion").forEach(b=>b.onclick=()=>{
+    applyParticipantSuggestion(Number(b.dataset.suggestionIndex),b.dataset.suggestionName);
+  });
+}
 function applyParticipantSuggestion(index,name){
   state.players[index]=name;
   activeNameInput=null;
@@ -238,7 +261,7 @@ function renderHome(){
       <div class="name-grid">
         ${state.players.slice(0,state.playerCount).map((n,i)=>`<div class="name-field-wrap">
           <input class="name-input" data-index="${i}" value="${escapeHtml(n)}" placeholder="${i+1}人目" autocomplete="off">
-          ${activeNameInput===i?renderNameSuggestions(i,n):""}
+          <div class="name-suggestions-holder">${activeNameInput===i?renderNameSuggestions(i,n):""}</div>
         </div>`).join("")}
       </div>
       ${recentGroupSuggestions().length?`<div class="recent-group-wrap"><div class="small-note">過去の組み合わせ</div><div class="recent-group-list">${recentGroupSuggestions().slice(0,3).map((names,i)=>`<button type="button" class="recent-group-btn" data-group-index="${i}">${escapeHtml(names.join("・"))}</button>`).join("")}</div></div>`:""}
@@ -250,7 +273,7 @@ function renderGame(){
   const n=state.playerCount,names=state.players.slice(0,n).map((x,i)=>x||`${i+1}人目`),t=totalsForRows(state.currentMatches,state.companyMode);
   const thead=`<thead><tr><th class="row-label">半荘</th>${names.map(name=>`<th><span class="player-head-name">${escapeHtml(name)}</span>${state.companyMode?`<span class="player-head-sub"><span>ウマ</span><span>スコア</span></span>`:""}</th>`).join("")}</tr></thead>`;
   const body=state.currentMatches.map((r,mi)=>`<tr><th class="row-label">${mi+1}</th>${names.map((_,pi)=>state.companyMode?`<td><div class="company-row"><button class="cell-btn ${colorClass(r.uma[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="uma">${r.uma[pi]===""?"":formatUma(r.uma[pi])}</button><button class="cell-btn ${colorClass(r.scores[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="scores">${r.scores[pi]===""?"":formatNumber(r.scores[pi])}</button></div></td>`:`<td><button class="cell-btn ${colorClass(r.scores[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="scores">${r.scores[pi]===""?"":formatNumber(r.scores[pi])}</button></td>`).join("")}</tr>`).join("");
-  return `<section class="card"><div class="detail-head"><button class="back-btn" id="backHome">‹ 戻る</button><div><strong>対局成績</strong><div class="muted">${state.companyMode?"4人打ち・会社モード":`${n}人打ち`}</div></div></div>
+  return `<section class="card"><div class="detail-head"><button class="back-btn" id="backHome">‹ 保存せず終了</button><div><strong>対局成績</strong><div class="muted">${state.companyMode?"4人打ち・会社モード":`${n}人打ち`}</div></div></div>
     <div class="table-wrap"><table class="score-table">${thead}<tbody>${body}</tbody></table></div>
     <button id="addMatchBtn" class="secondary-btn add-row">＋ 半荘を追加</button>
     <button id="finishGameBtn" class="primary-btn add-row">対局を記録する</button>
@@ -389,22 +412,18 @@ function bind(){
   document.querySelectorAll(".name-input").forEach(i=>{
     i.onfocus=()=>{
       activeNameInput=Number(i.dataset.index);
-      render();
-      requestAnimationFrame(()=>{
-        const el=document.querySelector(`.name-input[data-index="${activeNameInput}"]`);
-        if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}
-      });
+      updateSuggestionPopup(i);
+    };
+    i.onclick=()=>{
+      activeNameInput=Number(i.dataset.index);
+      updateSuggestionPopup(i);
     };
     i.oninput=()=>{
       const idx=Number(i.dataset.index);
       state.players[idx]=i.value;
       activeNameInput=idx;
       save();
-      render();
-      requestAnimationFrame(()=>{
-        const el=document.querySelector(`.name-input[data-index="${idx}"]`);
-        if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}
-      });
+      updateSuggestionPopup(i);
     };
   });
   document.querySelectorAll(".name-suggestion").forEach(b=>b.onclick=()=>{
@@ -417,7 +436,7 @@ function bind(){
   });
   const nc=document.getElementById("newCompanyMode");if(nc)nc.onchange=()=>setCompany(nc.checked);
   const start=document.getElementById("startBtn");if(start)start.onclick=startNew;
-  const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>{state.currentMatches=[];state.currentView="home";save();render()};
+  const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>discardCurrentGame();
   document.querySelectorAll(".cell-btn[data-kind]").forEach(b=>b.onclick=()=>{const mi=Number(b.dataset.mi),pi=Number(b.dataset.pi),kind=b.dataset.kind,row=state.currentMatches[mi];const blanks=row[kind].map((v,i)=>String(v).trim()===""?i:null).filter(i=>i!==null);if(blanks.length===1&&blanks[0]===pi){autoFill(mi,kind,pi)}else openCalc(mi,pi,kind)});
   const add=document.getElementById("addMatchBtn");if(add)add.onclick=addMatch;
   const finish=document.getElementById("finishGameBtn");if(finish)finish.onclick=finishGame;
@@ -444,7 +463,7 @@ document.getElementById("settingsBtn").onclick=()=>{document.getElementById("com
 document.getElementById("closeSettings").onclick=()=>document.getElementById("settingsDialog").close();
 document.getElementById("companyModeToggle").onchange=e=>setCompany(e.target.checked);
 document.getElementById("rateInput").onchange=e=>{const v=Number(e.target.value);state.rate=Number.isFinite(v)&&v>=0?v:50;save();render()};
-document.getElementById("resetBtn").onclick=resetAll;
+document.getElementById("resetParticipantsBtn").onclick=resetParticipants;
 document.querySelectorAll("#calculatorDialog [data-key]").forEach(btn=>btn.onclick=()=>{
   const k=btn.dataset.key;
   if(k==="ok")return closeCalc(true);

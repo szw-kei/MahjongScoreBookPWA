@@ -161,3 +161,6 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   .name-suggestion{padding:9px 10px;font-size:13px}
   .recent-group-btn{font-size:10px}
 }
+
+.name-suggestions-holder{position:relative}
+.name-field-wrap .name-suggestions{top:4px}
