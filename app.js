@@ -380,6 +380,46 @@ function renderHistoryDetail(){
 function renderPeople(){
   const ps=people();return `<section class="card">${navTabs("people")}<h2 class="section-title">参加者成績</h2>${ps.length?ps.map(n=>{const g=personStats(n);return `<button class="person-card" data-person="${escapeHtml(n)}"><h3>${escapeHtml(n)}</h3><div class="person-summary">4人打ち ${g[4].games}対局・${g[4].handCount}半荘　／　3人打ち ${g[3].games}対局・${g[3].handCount}半荘</div></button>`}).join(""):`<div class="empty-state">対局を記録すると参加者成績が表示されます。</div>`}</section>`;
 }
+function personHistoryResult(historyItem,name){
+  const pi=historyItem.playerNames.indexOf(name);
+  if(pi<0)return null;
+  const scores=historyItem.matches.map(r=>Number(r.scores[pi])||0);
+  const umas=historyItem.matches.map(r=>Number(r.uma[pi])||0);
+  const score=scores.reduce((a,b)=>a+b,0);
+  const uma=umas.reduce((a,b)=>a+b,0);
+  const total=historyItem.playerCount===4?score+uma*5:score;
+  const income=Array.isArray(historyItem.income)&&historyItem.income[pi]!==null?Number(historyItem.income[pi]):null;
+  const ranks=historyItem.matches.map(r=>{
+    const values=r.scores.map(Number);
+    const order=[...values.keys()].sort((a,b)=>values[b]-values[a]);
+    return order.indexOf(pi)+1;
+  });
+  return {score,uma,total,income,ranks};
+}
+function renderPersonHistoryRows(name){
+  const records=[];
+  for(const h of state.history){
+    const result=personHistoryResult(h,name);
+    if(result)records.push({h,result});
+  }
+  if(!records.length)return `<div class="empty-state">過去の対局記録がありません。</div>`;
+  return records.map(({h,result})=>{
+    const ranks=result.ranks.map(r=>`${r}着`).join("・");
+    const incomeText=result.income===null?"—":formatMoney(result.income);
+    return `<button class="person-history-item" data-person-history-id="${h.id}">
+      <div>
+        <div class="person-history-date">${escapeHtml(h.date)}</div>
+        <div class="person-history-meta">${h.playerCount}人打ち・${h.matches.length}半荘・${escapeHtml(ranks)}</div>
+      </div>
+      <div class="person-history-values">
+        <div><span>ウマ</span><strong class="${colorClass(result.uma)}">${formatUma(result.uma)}</strong></div>
+        <div><span>スコア</span><strong>${formatNumber(result.score)}</strong></div>
+        <div><span>合計</span><strong>${formatNumber(result.total)}</strong></div>
+        <div><span>収支</span><strong>${incomeText}</strong></div>
+      </div>
+    </button>`;
+  }).join("");
+}
 function statsCard(label,g,n){
   if(!g.games)return `<div class="card"><h3>${label}</h3><div class="empty-state">記録なし</div></div>`;
   let rankRows="";for(let i=1;i<=n;i++)rankRows+=`<span>${i}位</span><strong>${g.ranks[i]}回</strong>`;
@@ -391,87 +431,34 @@ function renderPersonDetail(){
   const name=state.selectedPerson;
   if(!name)return renderPeople();
   const g=personStats(name);
-  const g4=g[4], g3=g[3];
-  const income=g4.income+g3.income;
-  const hasOld=!((g4.incomeRecords===g4.games)&&(g3.incomeRecords===g3.games));
+  const overallIncome=g[3].income+g[4].income;
+  const oldIncome=g[3].incomeRecords<g[3].games||g[4].incomeRecords<g[4].games;
 
-  const rankRate=(x)=>g4.handCount?`${(x/g4.handCount*100).toFixed(1)}%`:"0.0%";
-  const card4=g4.games?`
-    <section class="person-stat-section">
-      <button class="person-section-head" data-person-section="4">
-        <span>4人戦績</span><span class="chevron open">⌃</span>
-      </button>
-      <div class="person-section-body">
-        <div class="rank-grid">
-          ${[1,2,3,4].map(i=>`<div class="rank-card"><div class="rank-label">${i}着</div><div class="rank-value">${g4.ranks[i]}</div><div class="rank-unit">回</div><div class="rank-rate">${rankRate(g4.ranks[i])}</div></div>`).join("")}
-        </div>
-        <div class="metric-grid">
-          <div class="metric-card"><span>平均順位</span><strong>${g4.avg?.toFixed(2) ?? "—"}</strong></div>
-          <div class="metric-card"><span>1位率</span><strong>${g4.firstRate?.toFixed(1) ?? "0.0"}<small>%</small></strong></div>
-          <div class="metric-card"><span>ウマ合計</span><strong class="${colorClass(g4.uma)}">${formatUma(g4.uma)}</strong></div>
-          <div class="metric-card"><span>スコア合計</span><strong>${formatNumber(g4.score)}</strong></div>
-          <div class="metric-card"><span>対局数</span><strong>${g4.games}<small>回</small></strong></div>
-          <div class="metric-card"><span>半荘数</span><strong>${g4.handCount}<small>半荘</small></strong></div>
-        </div>
-        <div class="person-total-row"><span>合計スコア</span><strong>${formatNumber(g4.total)}</strong></div>
-        <div class="person-total-row"><span>収支</span><strong>${formatMoney(g4.income)}${g4.incomeRecords<g4.games?"*":""}</strong></div>
+  const personHeader=`<div class="card"><div class="detail-head"><button class="back-btn" id="backPeople">‹ 戻る</button><div><strong>${escapeHtml(name)}</strong><div class="muted">過去の対局から集計</div></div></div></div>`;
+
+  return `<section>
+    ${personHeader}
+    ${statsCard("4人打ち",g[4],4)}
+    ${statsCard("3人打ち",g[3],3)}
+    <div class="card">
+      <h3>総合</h3>
+      <div class="stat-grid">
+        <span>対局数</span><strong>${g[3].games+g[4].games}</strong>
+        <span>半荘数</span><strong>${g[3].handCount+g[4].handCount}</strong>
+        <span>ウマ合計</span><strong>${formatUma(g[3].uma+g[4].uma)}</strong>
+        <span>スコア合計</span><strong>${formatNumber(g[3].score+g[4].score)}</strong>
+        <span>合計スコア</span><strong>${formatNumber(g[3].total+g[4].total)}</strong>
+        <span>収支</span><strong>${formatMoney(overallIncome)}${oldIncome?"*":""}</strong>
       </div>
-    </section>`:
-    `<section class="person-stat-section"><div class="person-section-head static"><span>4人戦績</span><span class="chevron">⌄</span></div><div class="empty-state compact">記録なし</div></section>`;
-
-  const card3=g3.games?`
-    <section class="person-stat-section collapsed">
-      <button class="person-section-head" data-person-section="3">
-        <span>3人戦績</span><span class="chevron">⌄</span>
-      </button>
-      <div class="person-section-body hidden">
-        <div class="rank-grid rank-grid-3">
-          ${[1,2,3].map(i=>`<div class="rank-card"><div class="rank-label">${i}着</div><div class="rank-value">${g3.ranks[i]}</div><div class="rank-unit">回</div><div class="rank-rate">${g3.handCount?(g3.ranks[i]/g3.handCount*100).toFixed(1):"0.0"}%</div></div>`).join("")}
-        </div>
-        <div class="metric-grid">
-          <div class="metric-card"><span>平均順位</span><strong>${g3.avg?.toFixed(2) ?? "—"}</strong></div>
-          <div class="metric-card"><span>1位率</span><strong>${g3.firstRate?.toFixed(1) ?? "0.0"}<small>%</small></strong></div>
-          <div class="metric-card"><span>ウマ合計</span><strong class="${colorClass(g3.uma)}">${formatUma(g3.uma)}</strong></div>
-          <div class="metric-card"><span>スコア合計</span><strong>${formatNumber(g3.score)}</strong></div>
-          <div class="metric-card"><span>対局数</span><strong>${g3.games}<small>回</small></strong></div>
-          <div class="metric-card"><span>半荘数</span><strong>${g3.handCount}<small>半荘</small></strong></div>
-        </div>
-        <div class="person-total-row"><span>合計スコア</span><strong>${formatNumber(g3.total)}</strong></div>
-        <div class="person-total-row"><span>収支</span><strong>${formatMoney(g3.income)}${g3.incomeRecords<g3.games?"*":""}</strong></div>
-      </div>
-    </section>`:
-    `<section class="person-stat-section collapsed"><button class="person-section-head" data-person-section="3"><span>3人戦績</span><span class="chevron">⌄</span></button><div class="empty-state compact hidden">記録なし</div></section>`;
-
-  return `<section class="person-page">
-    <div class="person-toolbar">
-      <button class="person-back" id="backPeople">‹ 戻る</button>
-      <div class="user-switch"><span>ユーザ変更：</span><strong>${escapeHtml(name)}</strong></div>
-      <button class="person-menu" id="personMenuBtn" aria-label="参加者変更">☷</button>
+      ${oldIncome?`<div class="small-note">* 収支保存前の旧記録は累計収支に含まれていません。</div>`:""}
     </div>
-
-    <section class="balance-card">
-      <div class="balance-label">収支</div>
-      <div class="balance-value">${income>=0?"+":""}${formatMoney(income)}</div>
-      <div class="balance-unit">P</div>
-    </section>
-
-    ${card4}
-    ${card3}
-
-    <section class="card person-total-summary">
-      <div class="person-summary-title">総合</div>
-      <div class="person-summary-grid">
-        <div><span>対局数</span><strong>${g4.games+g3.games}</strong></div>
-        <div><span>半荘数</span><strong>${g4.handCount+g3.handCount}</strong></div>
-        <div><span>ウマ合計</span><strong>${formatUma(g4.uma+g3.uma)}</strong></div>
-        <div><span>スコア合計</span><strong>${formatNumber(g4.score+g3.score)}</strong></div>
-        <div><span>合計スコア</span><strong>${formatNumber(g4.total+g3.total)}</strong></div>
-        <div><span>収支</span><strong>${formatMoney(income)}${hasOld?"*":""}</strong></div>
+    <div class="card person-history-card-wrap">
+      <div class="person-history-title-row">
+        <h3>過去の対局</h3>
+        <span class="muted">${state.history.filter(h=>h.playerNames.includes(name)).length}対局</span>
       </div>
-      ${hasOld?`<div class="small-note">* 収支保存前の旧記録は累計収支に含まれていません。</div>`:""}
-    </section>
-
-    ${hasOld?`<div class="small-note person-old-note">※ 収支保存機能追加前の対局は収支集計から除外しています。</div>`:""}
+      <div class="person-history-list">${renderPersonHistoryRows(name)}</div>
+    </div>
   </section>`;
 }
 function render(){
@@ -520,6 +507,12 @@ function bind(){
   const dh=document.getElementById("deleteHistoryBtn");if(dh)dh.onclick=()=>deleteHistory(state.selectedHistoryId);
   document.querySelectorAll("[data-person]").forEach(b=>b.onclick=()=>{state.selectedPerson=b.dataset.person;state.currentView="people";save();render()});
   const bp=document.getElementById("backPeople");if(bp)bp.onclick=()=>{state.selectedPerson=null;render()};
+  document.querySelectorAll("[data-person-history-id]").forEach(b=>b.onclick=()=>{
+    state.selectedHistoryId=b.dataset.personHistoryId;
+    state.selectedPerson=null;
+    state.currentView="history";
+    save();render();
+  });
   document.querySelectorAll("[data-person-section]").forEach(btn=>btn.onclick=()=>{
     const section=btn.closest(".person-stat-section");
     const body=section.querySelector(".person-section-body");
