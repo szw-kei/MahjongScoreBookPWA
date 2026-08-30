@@ -1,373 +1,370 @@
-const STORAGE_KEY = 'mahjongScoreBookPWA.v2';
-const DEFAULT_STATE = {
-  players: ['', '', '', ''],
-  playerCount: 4,
-  companyMode: false,
-  rate: 50,
-  matches: []
+const KEY="mahjongScoreBookPWA.v7";
+const LEGACY_KEY="mahjongScoreBookPWA.v6";
+const defaultState={
+  players:["","","",""],playerCount:4,companyMode:false,rate:50,
+  currentMatches:[],history:[],currentView:"home",selectedHistoryId:null,selectedPerson:null
 };
+let state=loadState(),calcContext=null,calcText="0";
 
-let state = loadState();
-let calcContext = null;
-let calcText = '0';
+function clone(x){return JSON.parse(JSON.stringify(x))}
+function localDateString(d=new Date()){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`}
+function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+function formatNumber(n){const x=Number(n)||0;return Number.isInteger(x)?String(x):x.toFixed(1).replace(/\.0$/,"")}
+function formatMoney(n){const x=Number(n)||0;return Number.isInteger(x)?String(x):x.toFixed(2).replace(/\.?0+$/,"")}
+function formatUma(n){const x=Number(n)||0;if(x>0)return `○${formatNumber(x)}`;if(x<0)return `×${formatNumber(Math.abs(x))}`;return "0"}
+function colorClass(n){return Number(n)>0?"uma-positive":Number(n)<0?"uma-negative":""}
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(DEFAULT_STATE);
-    const saved = JSON.parse(raw);
-    const result = { ...structuredClone(DEFAULT_STATE), ...saved };
-    result.players = Array.isArray(saved.players) ? saved.players.slice(0, 4) : [...DEFAULT_STATE.players];
-    while (result.players.length < 4) result.players.push('');
-    result.matches = Array.isArray(saved.matches) ? saved.matches : [];
-    result.rate = Number.isFinite(Number(result.rate)) ? Number(result.rate) : 50;
-    if (result.playerCount === 3) result.companyMode = false;
-    result.matches.forEach(row => normalizeRow(row, result.playerCount, result.companyMode));
-    return result;
-  } catch (error) {
-    console.error(error);
-    return structuredClone(DEFAULT_STATE);
+function ensureRow(row,n,company){
+  row.scores=Array.from({length:n},(_,i)=>row.scores?.[i]??"");
+  row.uma=Array.from({length:n},(_,i)=>company?(row.uma?.[i]??""):0);
+}
+function normalizeState(s){
+  const o={...clone(defaultState),...s};
+  o.players=Array.isArray(o.players)?o.players.slice(0,4):clone(defaultState.players);
+  while(o.players.length<4)o.players.push("");
+  o.playerCount=o.playerCount===3?3:4;
+  o.companyMode=o.playerCount===4&&!!o.companyMode;
+  o.rate=Number.isFinite(Number(o.rate))?Number(o.rate):50;
+  o.currentMatches=Array.isArray(o.currentMatches)?o.currentMatches:[];
+  o.history=Array.isArray(o.history)?o.history:[];
+  o.currentMatches.forEach(r=>ensureRow(r,o.playerCount,o.companyMode));
+  o.history.forEach(h=>{
+    h.id=h.id||crypto.randomUUID();h.date=h.date||localDateString();
+    h.playerCount=h.playerCount===3?3:4;
+    h.playerNames=Array.isArray(h.playerNames)?h.playerNames.slice(0,h.playerCount):[];
+    h.matches=Array.isArray(h.matches)?h.matches:[];
+    h.matches.forEach(r=>{
+      r.scores=Array.from({length:h.playerCount},(_,i)=>Number(r.scores?.[i])||0);
+      r.uma=Array.from({length:h.playerCount},(_,i)=>Number(r.uma?.[i])||0);
+    });
+    h.income=Array.isArray(h.income) ? h.income.slice(0,h.playerCount).map(v=>Number.isFinite(Number(v))?Number(v):null) : null;
+  });
+  return o;
+}
+function migrateLegacy(raw){
+  const o={...clone(defaultState),players:raw.players||clone(defaultState.players),playerCount:raw.playerCount||4,companyMode:!!raw.companyMode,rate:Number(raw.rate)||50};
+  o.currentMatches=(raw.matches||[]).map(r=>({scores:r.scores||[],uma:r.uma||Array(o.playerCount).fill("")}));
+  return normalizeState(o);
+}
+function loadState(){
+  try{const v7=JSON.parse(localStorage.getItem(KEY)||"null");if(v7)return normalizeState(v7);
+      const old=JSON.parse(localStorage.getItem(LEGACY_KEY)||"null");if(old)return migrateLegacy(old);}
+  catch(e){console.error(e)}
+  return clone(defaultState);
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function totalsForRows(rows,company){
+  const n=state.playerCount,scores=Array(n).fill(0),umas=Array(n).fill(0);
+  rows.forEach(r=>{ensureRow(r,n,company);r.scores.forEach((v,i)=>scores[i]+=Number(v)||0);r.uma.forEach((v,i)=>umas[i]+=Number(v)||0)});
+  const total=scores.map((v,i)=>company?v+umas[i]*5:v),income=total.map(v=>v*state.rate);
+  return {scores,umas,total,income};
+}
+
+function adjusted(values){
+  const nums=values.map(v=>v===""||v==null?null:Number(v));
+  const missing=nums.filter(v=>v===null).length;
+  if(missing===1){
+    const sum=nums.reduce((a,v)=>a+(v??0),0);
+    return nums.map(v=>v===null?-sum:v);
   }
-}
-
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function normalizeRow(row, count, companyMode) {
-  row.scores = Array.from({ length: count }, (_, i) => row.scores?.[i] ?? '');
-  row.uma = Array.from({ length: count }, (_, i) => row.uma?.[i] ?? (companyMode ? '' : 0));
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, char => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[char]));
-}
-
-function formatNumber(value) {
-  const number = Number(value) || 0;
-  return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/\.?0+$/, '');
-}
-
-function formatUma(value) {
-  const number = Number(value) || 0;
-  if (number > 0) return `○${formatNumber(number)}`;
-  if (number < 0) return `×${formatNumber(Math.abs(number))}`;
-  return '0';
-}
-
-function autoCorrect(values) {
-  const numbers = values.map(value => value === '' || value == null ? null : Number(value));
-  const missing = numbers.filter(value => value === null).length;
-
-  if (missing === 1) {
-    const sum = numbers.reduce((total, value) => total + (value ?? 0), 0);
-    return numbers.map(value => value === null ? -sum : value);
-  }
-
-  if (missing === 0) {
-    const sum = numbers.reduce((total, value) => total + value, 0);
-    if (sum !== 0) {
-      const max = Math.max(...numbers);
-      const index = numbers.indexOf(max);
-      numbers[index] -= sum;
+  if(missing===0){
+    const sum=nums.reduce((a,v)=>a+v,0);
+    if(Math.abs(sum)>1e-9){
+      const max=Math.max(...nums),idx=nums.indexOf(max);
+      nums[idx]-=sum;
     }
   }
-
-  return numbers;
+  return nums;
 }
-
-function addMatch() {
-  const count = state.playerCount;
-  state.matches.push({
-    scores: Array(count).fill(''),
-    uma: Array(count).fill(state.companyMode ? '' : 0)
+function autoFill(mi,kind,pi){
+  const row=state.currentMatches[mi],blanks=row[kind].map((v,i)=>String(v).trim()===""?i:null).filter(i=>i!==null);
+  if(blanks.length!==1||blanks[0]!==pi)return false;
+  const fixed=adjusted(row[kind]);row[kind]=fixed.map(v=>v==null?"":v);save();render();return true;
+}
+function openCalc(mi,pi,kind){
+  const raw=state.currentMatches[mi][kind][pi];
+  calcContext={mi,pi,kind};calcText=raw===""?"0":String(raw);
+  document.getElementById("calcValue").textContent=calcText;
+  document.getElementById("calculatorDialog").showModal();
+}
+function closeCalc(commit=true){
+  if(!calcContext)return;
+  if(commit){
+    const {mi,pi,kind}=calcContext,row=state.currentMatches[mi];
+    let raw=calcText;
+    if(raw==="-"||raw==="-0")raw=raw==="-0"?"0":"";
+    row[kind][pi]=raw===""?"":Number(raw);
+    row[kind]=adjusted(row[kind]).map(v=>v==null?"":v);
+    save();render();
+  }
+  calcContext=null;document.getElementById("calculatorDialog").close();
+}
+function setPlayerCount(n){
+  state.playerCount=n;if(n===3)state.companyMode=false;
+  state.players=state.players.slice(0,n);while(state.players.length<n)state.players.push("");
+  state.currentMatches.forEach(r=>ensureRow(r,n,state.companyMode));save();render();
+}
+function setCompany(v){
+  state.companyMode=state.playerCount===4&&!!v;
+  state.currentMatches.forEach(r=>{ensureRow(r,state.playerCount,state.companyMode);
+    if(state.companyMode && r.uma.every(v=>Number(v)===0))r.uma=Array(state.playerCount).fill("");
+    if(!state.companyMode)r.uma=Array(state.playerCount).fill(0);
   });
-  saveState();
-  render();
+  save();render();
 }
-
-function changePlayerCount(count) {
-  state.playerCount = count;
-  if (count === 3) state.companyMode = false;
-  state.players = state.players.slice(0, count);
-  while (state.players.length < count) state.players.push('');
-  state.matches.forEach(row => normalizeRow(row, count, state.companyMode));
-  saveState();
-  render();
-}
-
-function calculateTotals() {
-  const count = state.playerCount;
-  const scores = Array(count).fill(0);
-  const umas = Array(count).fill(0);
-
-  state.matches.forEach(row => {
-    normalizeRow(row, count, state.companyMode);
-    row.scores.forEach((value, index) => { scores[index] += Number(value) || 0; });
-    row.uma.forEach((value, index) => { umas[index] += Number(value) || 0; });
+function addMatch(){state.currentMatches.push({scores:Array(state.playerCount).fill(""),uma:state.companyMode?Array(state.playerCount).fill(""):Array(state.playerCount).fill(0)});save();render()}
+function finishGame(){
+  if(!state.currentMatches.length)return;
+  const n=state.playerCount;
+  const valid=state.currentMatches.every(r=>{
+    ensureRow(r,n,state.companyMode);
+    const s=r.scores.every(v=>Number.isFinite(Number(v)))&&Math.abs(r.scores.reduce((a,v)=>a+(Number(v)||0),0))<1e-9;
+    const u=!state.companyMode|| (r.uma.every(v=>Number.isFinite(Number(v)))&&Math.abs(r.uma.reduce((a,v)=>a+(Number(v)||0),0))<1e-9);
+    return s&&u;
   });
-
-  const totals = scores.map((score, index) => state.companyMode ? score + umas[index] * 5 : score);
-  return { scores, umas, totals, income: totals.map(value => value * state.rate) };
-}
-
-function openCalculator(matchIndex, playerIndex, kind) {
-  const row = state.matches[matchIndex];
-  calcText = row[kind][playerIndex] === '' ? '0' : String(row[kind][playerIndex]);
-  calcContext = { matchIndex, playerIndex, kind };
-  document.getElementById('calcValue').textContent = calcText;
-  document.getElementById('calculatorDialog').showModal();
-}
-
-function closeCalculator(shouldSave) {
-  if (!calcContext) return;
-  if (shouldSave) {
-    const { matchIndex, playerIndex, kind } = calcContext;
-    const row = state.matches[matchIndex];
-    const value = calcText === '' || calcText === '-' ? '' : Number(calcText);
-    row[kind][playerIndex] = Number.isFinite(value) ? value : '';
-    row[kind] = autoCorrect(row[kind]);
-    saveState();
-    render();
-  }
-  calcContext = null;
-  document.getElementById('calculatorDialog').close();
-}
-
-function renderSetup() {
-  const count = state.playerCount;
-  const names = Array.from({ length: count }, (_, index) => `
-    <input class="name-input" data-index="${index}" value="${escapeHtml(state.players[index])}" placeholder="${index + 1}人目">
-  `).join('');
-
-  return `
-    <section class="card">
-      <h2 class="section-title">新しい対局</h2>
-      <div class="form-grid">
-        <div>
-          <div class="small-note">対局人数</div>
-          <div class="segmented">
-            <button data-count="3" class="${count === 3 ? 'active' : ''}">3人打ち</button>
-            <button data-count="4" class="${count === 4 ? 'active' : ''}">4人打ち</button>
-          </div>
-        </div>
-        ${count === 4 ? `
-          <label class="setting-row inline-setting">
-            <span>会社モード</span>
-            <input id="newCompanyMode" type="checkbox" ${state.companyMode ? 'checked' : ''}>
-          </label>
-        ` : ''}
-        <div>
-          <div class="small-note">参加者名</div>
-          <div class="name-grid">${names}</div>
-        </div>
-        <button id="startBtn" class="primary-btn">${state.matches.length ? '対局を続ける' : '対局を開始'}</button>
-      </div>
-    </section>
-  `;
-}
-
-function renderMatches() {
-  if (!state.matches.length) {
-    return `<section class="card"><p class="small-note">「対局を開始」を押すと半荘1が追加されます。</p></section>`;
-  }
-
-  const count = state.playerCount;
-  const names = state.players.slice(0, count).map((name, index) => name || `${index + 1}人目`);
-
-  if (state.companyMode) {
-    const rows = state.matches.map((row, matchIndex) => {
-      normalizeRow(row, count, true);
-      const cells = names.map((_, playerIndex) => {
-        const uma = row.uma[playerIndex];
-        const score = row.scores[playerIndex];
-        const umaClass = Number(uma) > 0 ? 'uma-positive' : Number(uma) < 0 ? 'uma-negative' : '';
-        return `
-          <td><button class="cell-btn ${umaClass}" data-mi="${matchIndex}" data-pi="${playerIndex}" data-kind="uma">${uma === '' ? '' : formatUma(uma)}</button></td>
-          <td><button class="cell-btn" data-mi="${matchIndex}" data-pi="${playerIndex}" data-kind="scores">${score === '' ? '' : formatNumber(score)}</button></td>
-        `;
-      }).join('');
-      return `<tr><th class="row-label">${matchIndex + 1}</th>${cells}</tr>`;
-    }).join('');
-
-    return `
-      <section class="card">
-        <h2 class="section-title">対局成績</h2>
-        <div class="table-wrap">
-          <table class="score-table company-table">
-            <thead>
-              <tr>
-                <th class="row-label" rowspan="2">半荘</th>
-                ${names.map(name => `<th colspan="2">${escapeHtml(name)}</th>`).join('')}
-              </tr>
-              <tr>
-                ${names.map(() => '<th class="subhead">ウマ</th><th class="subhead">スコア</th>').join('')}
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <button id="addMatchBtn" class="secondary-btn add-row">＋ 半荘を追加</button>
-        <p class="small-note">ウマ・スコアともに1人だけ空欄にすると、残りから自動計算します。常に合計0になります。</p>
-      </section>
-    `;
-  }
-
-  const rows = state.matches.map((row, matchIndex) => {
-    normalizeRow(row, count, false);
-    const cells = names.map((_, playerIndex) =>
-      `<td><button class="cell-btn" data-mi="${matchIndex}" data-pi="${playerIndex}" data-kind="scores">${row.scores[playerIndex] === '' ? '' : formatNumber(row.scores[playerIndex])}</button></td>`
-    ).join('');
-    return `<tr><th class="row-label">${matchIndex + 1}</th>${cells}</tr>`;
-  }).join('');
-
-  return `
-    <section class="card">
-      <h2 class="section-title">対局成績</h2>
-      <div class="table-wrap">
-        <table class="score-table">
-          <thead><tr><th class="row-label">半荘</th>${names.map(name => `<th>${escapeHtml(name)}</th>`).join('')}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <button id="addMatchBtn" class="secondary-btn add-row">＋ 半荘を追加</button>
-      <p class="small-note">1人だけ空欄にすると、残りから自動計算します。常に合計0になります。</p>
-    </section>
-  `;
-}
-function renderTotals() {
-  if (!state.matches.length) return '';
-  const totals = calculateTotals();
-  const values = (array, formatter) => array.map(value => `<span>${formatter(value)}</span>`).join('');
-
-  if (!state.companyMode) {
-    return `
-      <div class="totals-sticky"><div class="totals-inner">
-        <div class="total-row total-main"><span class="label">合計</span>${values(totals.totals, formatNumber)}</div>
-        <div class="total-row total-income"><span class="label">収支</span>${values(totals.income, formatNumber)}</div>
-      </div></div>
-    `;
-  }
-
-  const names = state.players.slice(0, state.playerCount).map((name, index) => name || `${index + 1}人目`);
-  return `
-    <div class="totals-sticky"><div class="totals-inner">
-      <table class="totals-company-table">
-        <thead>
-          <tr>
-            <th class="total-label-head" rowspan="2">集計</th>
-            ${names.map(name => `<th colspan="2">${escapeHtml(name)}</th>`).join('')}
-          </tr>
-          <tr>
-            ${names.map(() => '<th>ウマ</th><th>スコア</th>').join('')}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th>合計</th>
-            ${names.map((_, i) => `<td class="uma-total ${Number(totals.umas[i]) > 0 ? 'uma-positive' : Number(totals.umas[i]) < 0 ? 'uma-negative' : ''}">${formatUma(totals.umas[i])}</td><td>${formatNumber(totals.scores[i])}</td>`).join('')}
-          </tr>
-          <tr class="income-row">
-            <th>収支</th>
-            ${names.map((_, i) => `<td colspan="2">${formatNumber(totals.income[i])}</td>`).join('')}
-          </tr>
-        </tbody>
-      </table>
-    </div></div>
-  `;
-}
-
-function render() {
-  document.getElementById('app').innerHTML = renderSetup() + renderMatches() + renderTotals();
-  bindMainEvents();
-}
-
-function bindMainEvents() {
-  document.querySelectorAll('[data-count]').forEach(button => {
-    button.onclick = () => changePlayerCount(Number(button.dataset.count));
-  });
-
-  document.querySelectorAll('.name-input').forEach(input => {
-    input.oninput = () => {
-      state.players[Number(input.dataset.index)] = input.value;
-      saveState();
-    };
-  });
-
-  const company = document.getElementById('newCompanyMode');
-  if (company) {
-    company.onchange = () => {
-      state.companyMode = company.checked;
-      state.matches.forEach(row => normalizeRow(row, state.playerCount, state.companyMode));
-      saveState();
-      render();
-    };
-  }
-
-  const start = document.getElementById('startBtn');
-  if (start) start.onclick = () => {
-    if (!state.matches.length) addMatch();
-    else window.scrollTo({ top: 0, behavior: 'smooth' });
+  if(!valid){alert("未入力または合計が0でない半荘があります。すべて入力してください。");return}
+  const savedMatches=state.currentMatches.map(r=>({
+    scores:r.scores.map(Number),
+    uma:state.companyMode?r.uma.map(Number):r.uma.map(Number)
+  }));
+  const savedTotals=totalsForRows(savedMatches,state.companyMode);
+  const item={
+    id:crypto.randomUUID(),
+    date:localDateString(),
+    playerCount:n,
+    playerNames:state.players.slice(0,n),
+    matches:savedMatches,
+    income:savedTotals.income.map(Number)
   };
+  state.history.unshift(item);state.currentMatches=[];state.currentView="home";save();render();
+}
+function resetAll(){
+  if(!confirm("現在の対局、過去の対局、参加者名をすべて削除します。よろしいですか？"))return;
+  state=clone(defaultState);save();render();document.getElementById("settingsDialog").close();
+}
+function deleteHistory(id){
+  if(!confirm("この対局記録を削除しますか？"))return;
+  state.history=state.history.filter(h=>h.id!==id);state.selectedHistoryId=null;state.currentView="history";save();render();
+}
+function startNew(){
+  const names=state.players.slice(0,state.playerCount).map(x=>x.trim());
+  if(names.some(x=>!x)){alert("参加者名を入力してください。");return}
+  state.players=names;state.currentMatches=[];addMatch();state.currentView="game";
+}
+function people(){
+  const set=new Set();state.history.forEach(h=>h.playerNames.forEach(n=>{if(n)set.add(n)}));return [...set].sort((a,b)=>a.localeCompare(b,"ja"));
+}
+function personStats(name){
+  const gs={3:initStats(3),4:initStats(4)};
+  state.history.forEach(h=>{
+    const pi=h.playerNames.indexOf(name);if(pi<0)return;
+    const g=gs[h.playerCount];g.games++;g.hands+=h.matches.length;
+    h.matches.forEach(r=>{
+      const scores=r.scores.map(Number),order=[...scores.keys()].sort((a,b)=>scores[b]-scores[a]),rank=order.indexOf(pi)+1;
+      if(rank>=1&&rank<=4)g.ranks[rank]++;
+      g.score+=Number(r.scores[pi])||0;g.uma+=Number(r.uma[pi])||0;g.rankSum+=rank;g.handCount++;
+    });
+    g.total=h.playerCount===4?g.score+g.uma*5:g.score;
+    if(Array.isArray(h.income) && Number.isFinite(Number(h.income[pi]))){
+      g.income+=Number(h.income[pi])||0;
+      g.incomeRecords++;
+    }
+    g.avg=g.handCount?g.rankSum/g.handCount:null;g.firstRate=g.handCount?g.ranks[1]/g.handCount*100:null;
+  });return gs;
+}
+function initStats(n){return{games:0,hands:0,handCount:0,ranks:{1:0,2:0,3:0,4:0},score:0,uma:0,total:0,rankSum:0,avg:null,firstRate:null,income:0,incomeRecords:0}}
 
-  document.querySelectorAll('.cell-btn').forEach(button => {
-    button.onclick = () => openCalculator(Number(button.dataset.mi), Number(button.dataset.pi), button.dataset.kind);
+function navTabs(active){
+  return `<div class="nav-tabs"><button class="tab-btn ${active==="home"?"active":""}" data-view="home">新しい対局</button><button class="tab-btn ${active==="history"?"active":""}" data-view="history">過去の対局</button><button class="tab-btn ${active==="people"?"active":""}" data-view="people">参加者成績</button></div>`;
+}
+function renderHome(){
+  return `<section class="card">${navTabs("home")}<h2 class="section-title">新しい対局</h2><div class="form-grid">
+    <div><div class="small-note">対局人数</div><div class="segmented"><button class="${state.playerCount===3?"active":""}" data-count="3">3人打ち</button><button class="${state.playerCount===4?"active":""}" data-count="4">4人打ち</button></div></div>
+    ${state.playerCount===4?`<label class="setting-row" style="padding:8px 0;border:0"><span>会社モード</span><input id="newCompanyMode" type="checkbox" ${state.companyMode?"checked":""}></label>`:""}
+    <div><div class="small-note">参加者名</div><div class="name-grid">${state.players.slice(0,state.playerCount).map((n,i)=>`<input class="name-input" data-index="${i}" value="${escapeHtml(n)}" placeholder="${i+1}人目">`).join("")}</div></div>
+    <button id="startBtn" class="primary-btn">対局を開始</button>
+  </div></section>`;
+}
+function renderGame(){
+  const n=state.playerCount,names=state.players.slice(0,n).map((x,i)=>x||`${i+1}人目`),t=totalsForRows(state.currentMatches,state.companyMode);
+  const thead=`<thead><tr><th class="row-label">半荘</th>${names.map(name=>`<th><span class="player-head-name">${escapeHtml(name)}</span>${state.companyMode?`<span class="player-head-sub"><span>ウマ</span><span>スコア</span></span>`:""}</th>`).join("")}</tr></thead>`;
+  const body=state.currentMatches.map((r,mi)=>`<tr><th class="row-label">${mi+1}</th>${names.map((_,pi)=>state.companyMode?`<td><div class="company-row"><button class="cell-btn ${colorClass(r.uma[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="uma">${r.uma[pi]===""?"":formatUma(r.uma[pi])}</button><button class="cell-btn ${colorClass(r.scores[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="scores">${r.scores[pi]===""?"":formatNumber(r.scores[pi])}</button></div></td>`:`<td><button class="cell-btn ${colorClass(r.scores[pi])}" data-mi="${mi}" data-pi="${pi}" data-kind="scores">${r.scores[pi]===""?"":formatNumber(r.scores[pi])}</button></td>`).join("")}</tr>`).join("");
+  return `<section class="card"><div class="detail-head"><button class="back-btn" id="backHome">‹ 戻る</button><div><strong>対局成績</strong><div class="muted">${state.companyMode?"4人打ち・会社モード":`${n}人打ち`}</div></div></div>
+    <div class="table-wrap"><table class="score-table">${thead}<tbody>${body}</tbody></table></div>
+    <button id="addMatchBtn" class="secondary-btn add-row">＋ 半荘を追加</button>
+    <button id="finishGameBtn" class="primary-btn add-row">対局を記録する</button>
+    <div class="small-note">1人分だけ空欄にすると、そのセルをタップして自動計算します。入力済みの修正でも合計0に調整します。</div></section>
+    <div class="totals-sticky"><div class="totals-inner">${renderCurrentTotals(t,names)}</div></div>`;
+}
+function renderCurrentTotals(t,names){
+  if(!state.companyMode)return `<div class="total-row simple"><span class="label">合計</span>${t.total.map(v=>`<span>${formatNumber(v)}</span>`).join("")}</div><div class="total-row simple total-income"><span class="label">収支</span>${t.income.map(v=>`<span>${formatMoney(v)}</span>`).join("")}</div><div class="summary-note">倍率 ${formatNumber(state.rate)}倍</div>`;
+  return `<div class="total-row company"><span class="label">集計</span>${names.map((_,i)=>`<span class="total-pair"><span class="${colorClass(t.umas[i])}">${formatUma(t.umas[i])}</span><span>${formatNumber(t.scores[i])}</span></span>`).join("")}</div>
+    <div class="total-row company"><span class="label">合計</span>${names.map((_,i)=>`<span>${formatNumber(t.total[i])}</span>`).join("")}</div>
+    <div class="total-row company total-income"><span class="label">収支</span>${names.map((_,i)=>`<span>${formatMoney(t.income[i])}</span>`).join("")}</div>
+    <div class="summary-note">各人：ウマ｜スコア　／ 合計=ウマ×5＋スコア　／ 倍率 ${formatNumber(state.rate)}倍</div>`;
+}
+function renderHistory(){
+  return `<section class="card">${navTabs("history")}<h2 class="section-title">過去の対局</h2>${state.history.length?state.history.map(h=>`<button class="history-item" data-history-id="${h.id}"><div class="history-top"><span>${escapeHtml(h.date)}</span><span>${h.playerCount}人打ち</span></div><div class="history-bottom">${escapeHtml(h.playerNames.join("・"))}　／　${h.matches.length}半荘</div></button>`).join(""):`<div class="empty-state">まだ対局記録がありません。</div>`}</section>`;
+}
+function renderHistoryDetail(){
+  const h=state.history.find(x=>x.id===state.selectedHistoryId);if(!h)return renderHistory();
+  const names=h.playerNames;
+  const rows=h.matches.map((r,mi)=>`<tr><th class="row-label">${mi+1}</th>${names.map((_,pi)=>`<td><div class="company-row"><div class="cell-btn ${colorClass(r.uma[pi])}">${formatUma(r.uma[pi])}</div><div class="cell-btn ${colorClass(r.scores[pi])}">${formatNumber(r.scores[pi])}</div></div></td>`).join("")}</tr>`).join("");
+  const totals=h.playerNames.map((_,i)=>({
+    uma:h.matches.reduce((s,r)=>s+(Number(r.uma[i])||0),0),
+    score:h.matches.reduce((s,r)=>s+(Number(r.scores[i])||0),0),
+    income:Array.isArray(h.income)&&h.income[i]!==null ? Number(h.income[i])||0 : null
+  }));
+  return `<section class="card"><div class="detail-head"><button class="back-btn" id="backHistory">‹ 戻る</button><div><strong>${escapeHtml(h.date)}</strong><div class="muted">${h.playerCount}人打ち・${h.matches.length}半荘</div></div></div>
+    <div class="table-wrap"><table class="score-table"><thead><tr><th class="row-label">半荘</th>${names.map(n=>`<th><span class="player-head-name">${escapeHtml(n)}</span><span class="player-head-sub"><span>ウマ</span><span>スコア</span></span></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="history-player-grid">${names.map((n,i)=>`<div class="history-player-card"><h4>${escapeHtml(n)}</h4><div class="stat-grid"><span>ウマ</span><strong class="${colorClass(totals[i].uma)}">${formatUma(totals[i].uma)}</strong><span>スコア</span><strong>${formatNumber(totals[i].score)}</strong><span>合計</span><strong>${formatNumber(totals[i].score+totals[i].uma*5)}</strong><span>収支</span><strong>${totals[i].income===null?"—":formatMoney(totals[i].income)}</strong></div></div>`).join("")}</div>
+    ${Array.isArray(h.income)&&h.income.some(v=>v===null)?`<div class="small-note">— は収支保存機能追加前の記録です。</div>`:""}
+    <button class="danger-btn" id="deleteHistoryBtn">この対局記録を削除</button></section>`;
+}
+function renderPeople(){
+  const ps=people();return `<section class="card">${navTabs("people")}<h2 class="section-title">参加者成績</h2>${ps.length?ps.map(n=>{const g=personStats(n);return `<button class="person-card" data-person="${escapeHtml(n)}"><h3>${escapeHtml(n)}</h3><div class="person-summary">4人打ち ${g[4].games}対局・${g[4].handCount}半荘　／　3人打ち ${g[3].games}対局・${g[3].handCount}半荘</div></button>`}).join(""):`<div class="empty-state">対局を記録すると参加者成績が表示されます。</div>`}</section>`;
+}
+function statsCard(label,g,n){
+  if(!g.games)return `<div class="card"><h3>${label}</h3><div class="empty-state">記録なし</div></div>`;
+  let rankRows="";for(let i=1;i<=n;i++)rankRows+=`<span>${i}位</span><strong>${g.ranks[i]}回</strong>`;
+  const incomeText=g.incomeRecords===g.games?formatMoney(g.income):`${formatMoney(g.income)}*`;
+  const incomeNote=g.incomeRecords<g.games?`<div class="small-note">* 収支保存前の旧記録は累計に含まれていません。</div>`:"";
+  return `<div class="card"><h3>${label}</h3><div class="stat-grid"><span>対局数</span><strong>${g.games}</strong><span>半荘数</span><strong>${g.handCount}</strong>${rankRows}<span>平均順位</span><strong>${g.avg.toFixed(2)}</strong><span>1位率</span><strong>${g.firstRate.toFixed(1)}%</strong><span>ウマ合計</span><strong class="${colorClass(g.uma)}">${formatUma(g.uma)}</strong><span>スコア合計</span><strong>${formatNumber(g.score)}</strong><span>合計スコア</span><strong>${formatNumber(g.total)}</strong><span>収支</span><strong>${incomeText}</strong></div>${incomeNote}</div>`;
+}
+function renderPersonDetail(){
+  const name=state.selectedPerson;
+  if(!name)return renderPeople();
+  const g=personStats(name);
+  const g4=g[4], g3=g[3];
+  const income=g4.income+g3.income;
+  const hasOld=!((g4.incomeRecords===g4.games)&&(g3.incomeRecords===g3.games));
+
+  const rankRate=(x)=>g4.handCount?`${(x/g4.handCount*100).toFixed(1)}%`:"0.0%";
+  const card4=g4.games?`
+    <section class="person-stat-section">
+      <button class="person-section-head" data-person-section="4">
+        <span>4人戦績</span><span class="chevron open">⌃</span>
+      </button>
+      <div class="person-section-body">
+        <div class="rank-grid">
+          ${[1,2,3,4].map(i=>`<div class="rank-card"><div class="rank-label">${i}着</div><div class="rank-value">${g4.ranks[i]}</div><div class="rank-unit">回</div><div class="rank-rate">${rankRate(g4.ranks[i])}</div></div>`).join("")}
+        </div>
+        <div class="metric-grid">
+          <div class="metric-card"><span>平均順位</span><strong>${g4.avg?.toFixed(2) ?? "—"}</strong></div>
+          <div class="metric-card"><span>1位率</span><strong>${g4.firstRate?.toFixed(1) ?? "0.0"}<small>%</small></strong></div>
+          <div class="metric-card"><span>ウマ合計</span><strong class="${colorClass(g4.uma)}">${formatUma(g4.uma)}</strong></div>
+          <div class="metric-card"><span>スコア合計</span><strong>${formatNumber(g4.score)}</strong></div>
+          <div class="metric-card"><span>対局数</span><strong>${g4.games}<small>回</small></strong></div>
+          <div class="metric-card"><span>半荘数</span><strong>${g4.handCount}<small>半荘</small></strong></div>
+        </div>
+        <div class="person-total-row"><span>合計スコア</span><strong>${formatNumber(g4.total)}</strong></div>
+        <div class="person-total-row"><span>収支</span><strong>${formatMoney(g4.income)}${g4.incomeRecords<g4.games?"*":""}</strong></div>
+      </div>
+    </section>`:
+    `<section class="person-stat-section"><div class="person-section-head static"><span>4人戦績</span><span class="chevron">⌄</span></div><div class="empty-state compact">記録なし</div></section>`;
+
+  const card3=g3.games?`
+    <section class="person-stat-section collapsed">
+      <button class="person-section-head" data-person-section="3">
+        <span>3人戦績</span><span class="chevron">⌄</span>
+      </button>
+      <div class="person-section-body hidden">
+        <div class="rank-grid rank-grid-3">
+          ${[1,2,3].map(i=>`<div class="rank-card"><div class="rank-label">${i}着</div><div class="rank-value">${g3.ranks[i]}</div><div class="rank-unit">回</div><div class="rank-rate">${g3.handCount?(g3.ranks[i]/g3.handCount*100).toFixed(1):"0.0"}%</div></div>`).join("")}
+        </div>
+        <div class="metric-grid">
+          <div class="metric-card"><span>平均順位</span><strong>${g3.avg?.toFixed(2) ?? "—"}</strong></div>
+          <div class="metric-card"><span>1位率</span><strong>${g3.firstRate?.toFixed(1) ?? "0.0"}<small>%</small></strong></div>
+          <div class="metric-card"><span>ウマ合計</span><strong class="${colorClass(g3.uma)}">${formatUma(g3.uma)}</strong></div>
+          <div class="metric-card"><span>スコア合計</span><strong>${formatNumber(g3.score)}</strong></div>
+          <div class="metric-card"><span>対局数</span><strong>${g3.games}<small>回</small></strong></div>
+          <div class="metric-card"><span>半荘数</span><strong>${g3.handCount}<small>半荘</small></strong></div>
+        </div>
+        <div class="person-total-row"><span>合計スコア</span><strong>${formatNumber(g3.total)}</strong></div>
+        <div class="person-total-row"><span>収支</span><strong>${formatMoney(g3.income)}${g3.incomeRecords<g3.games?"*":""}</strong></div>
+      </div>
+    </section>`:
+    `<section class="person-stat-section collapsed"><button class="person-section-head" data-person-section="3"><span>3人戦績</span><span class="chevron">⌄</span></button><div class="empty-state compact hidden">記録なし</div></section>`;
+
+  return `<section class="person-page">
+    <div class="person-toolbar">
+      <button class="person-back" id="backPeople">‹ 戻る</button>
+      <div class="user-switch"><span>ユーザ変更：</span><strong>${escapeHtml(name)}</strong></div>
+      <button class="person-menu" id="personMenuBtn" aria-label="参加者変更">☷</button>
+    </div>
+
+    <section class="balance-card">
+      <div class="balance-label">収支</div>
+      <div class="balance-value">${income>=0?"+":""}${formatMoney(income)}</div>
+      <div class="balance-unit">P</div>
+    </section>
+
+    ${card4}
+    ${card3}
+
+    <section class="card person-total-summary">
+      <div class="person-summary-title">総合</div>
+      <div class="person-summary-grid">
+        <div><span>対局数</span><strong>${g4.games+g3.games}</strong></div>
+        <div><span>半荘数</span><strong>${g4.handCount+g3.handCount}</strong></div>
+        <div><span>ウマ合計</span><strong>${formatUma(g4.uma+g3.uma)}</strong></div>
+        <div><span>スコア合計</span><strong>${formatNumber(g4.score+g3.score)}</strong></div>
+        <div><span>合計スコア</span><strong>${formatNumber(g4.total+g3.total)}</strong></div>
+        <div><span>収支</span><strong>${formatMoney(income)}${hasOld?"*":""}</strong></div>
+      </div>
+      ${hasOld?`<div class="small-note">* 収支保存前の旧記録は累計収支に含まれていません。</div>`:""}
+    </section>
+
+    ${hasOld?`<div class="small-note person-old-note">※ 収支保存機能追加前の対局は収支集計から除外しています。</div>`:""}
+  </section>`;
+}
+function render(){
+  let html;if(state.currentView==="game")html=renderGame();else if(state.currentView==="history"&&state.selectedHistoryId)html=renderHistoryDetail();else if(state.currentView==="history")html=renderHistory();else if(state.currentView==="people"&&state.selectedPerson)html=renderPersonDetail();else if(state.currentView==="people")html=renderPeople();else html=renderHome();
+  document.getElementById("app").innerHTML=html;bind();
+}
+function bind(){
+  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{state.currentView=b.dataset.view;state.selectedHistoryId=null;state.selectedPerson=null;save();render()});
+  document.querySelectorAll("[data-count]").forEach(b=>b.onclick=()=>setPlayerCount(Number(b.dataset.count)));
+  document.querySelectorAll(".name-input").forEach(i=>i.oninput=()=>{state.players[Number(i.dataset.index)]=i.value;save()});
+  const nc=document.getElementById("newCompanyMode");if(nc)nc.onchange=()=>setCompany(nc.checked);
+  const start=document.getElementById("startBtn");if(start)start.onclick=startNew;
+  const backHome=document.getElementById("backHome");if(backHome)backHome.onclick=()=>{state.currentMatches=[];state.currentView="home";save();render()};
+  document.querySelectorAll(".cell-btn[data-kind]").forEach(b=>b.onclick=()=>{const mi=Number(b.dataset.mi),pi=Number(b.dataset.pi),kind=b.dataset.kind,row=state.currentMatches[mi];const blanks=row[kind].map((v,i)=>String(v).trim()===""?i:null).filter(i=>i!==null);if(blanks.length===1&&blanks[0]===pi){autoFill(mi,kind,pi)}else openCalc(mi,pi,kind)});
+  const add=document.getElementById("addMatchBtn");if(add)add.onclick=addMatch;
+  const finish=document.getElementById("finishGameBtn");if(finish)finish.onclick=finishGame;
+  document.querySelectorAll("[data-history-id]").forEach(b=>b.onclick=()=>{state.selectedHistoryId=b.dataset.historyId;state.currentView="history";save();render()});
+  const bh=document.getElementById("backHistory");if(bh)bh.onclick=()=>{state.selectedHistoryId=null;render()};
+  const dh=document.getElementById("deleteHistoryBtn");if(dh)dh.onclick=()=>deleteHistory(state.selectedHistoryId);
+  document.querySelectorAll("[data-person]").forEach(b=>b.onclick=()=>{state.selectedPerson=b.dataset.person;state.currentView="people";save();render()});
+  const bp=document.getElementById("backPeople");if(bp)bp.onclick=()=>{state.selectedPerson=null;render()};
+  document.querySelectorAll("[data-person-section]").forEach(btn=>btn.onclick=()=>{
+    const section=btn.closest(".person-stat-section");
+    const body=section.querySelector(".person-section-body");
+    const chevron=btn.querySelector(".chevron");
+    if(body){
+      body.classList.toggle("hidden");
+      section.classList.toggle("collapsed",body.classList.contains("hidden"));
+      if(chevron)chevron.textContent=body.classList.contains("hidden")?"⌄":"⌃";
+    }
   });
+  const personMenu=document.getElementById("personMenuBtn");
+  if(personMenu)personMenu.onclick=()=>{state.selectedPerson=null;state.currentView="people";save();render();};
 
-  const add = document.getElementById('addMatchBtn');
-  if (add) add.onclick = addMatch;
 }
-
-document.getElementById('settingsBtn').onclick = () => {
-  document.getElementById('companyModeToggle').checked = state.companyMode;
-  document.getElementById('rateInput').value = state.rate;
-  document.getElementById('settingsDialog').showModal();
-};
-document.getElementById('closeSettings').onclick = () => document.getElementById('settingsDialog').close();
-document.getElementById('companyModeToggle').onchange = event => {
-  state.companyMode = event.target.checked && state.playerCount === 4;
-  state.matches.forEach(row => normalizeRow(row, state.playerCount, state.companyMode));
-  saveState();
-  render();
-};
-document.getElementById('rateInput').onchange = event => {
-  const value = Number(event.target.value);
-  state.rate = Number.isFinite(value) && value >= 0 ? value : 50;
-  event.target.value = state.rate;
-  saveState();
-  render();
-};
-document.getElementById('resetBtn').onclick = () => {
-  if (!confirm('すべての対局データと参加者名をリセットします。よろしいですか？')) return;
-  state = structuredClone(DEFAULT_STATE);
-  saveState();
-  document.getElementById('settingsDialog').close();
-  render();
-};
-
-document.querySelectorAll('#calculatorDialog [data-key]').forEach(button => {
-  button.onclick = () => {
-    const key = button.dataset.key;
-    if (key === 'ok') return closeCalculator(true);
-    if (key === 'clear') calcText = '0';
-    else if (key === 'back') calcText = calcText.length > 1 ? calcText.slice(0, -1) : '0';
-    else if (key === 'minus') calcText = calcText.startsWith('-') ? calcText.slice(1) : (calcText === '0' ? '-0' : `-${calcText}`);
-    else if (calcText === '0') calcText = key;
-    else if (calcText === '-0') calcText = `-${key}`;
-    else calcText += key;
-    document.getElementById('calcValue').textContent = calcText;
-  };
+document.getElementById("settingsBtn").onclick=()=>{document.getElementById("companyModeToggle").checked=state.companyMode;document.getElementById("rateInput").value=state.rate;document.getElementById("settingsDialog").showModal()};
+document.getElementById("closeSettings").onclick=()=>document.getElementById("settingsDialog").close();
+document.getElementById("companyModeToggle").onchange=e=>setCompany(e.target.checked);
+document.getElementById("rateInput").onchange=e=>{const v=Number(e.target.value);state.rate=Number.isFinite(v)&&v>=0?v:50;save();render()};
+document.getElementById("resetBtn").onclick=resetAll;
+document.querySelectorAll("#calculatorDialog [data-key]").forEach(btn=>btn.onclick=()=>{
+  const k=btn.dataset.key;
+  if(k==="ok")return closeCalc(true);
+  if(k==="clear")calcText="0";
+  else if(k==="back")calcText=calcText.length>1?calcText.slice(0,-1):"0";
+  else if(k==="minus"){if(calcText==="0")calcText="-0";else calcText=calcText.startsWith("-")?calcText.slice(1):"-"+calcText}
+  else calcText=calcText==="0"?k:calcText==="-0"?`-${k}`:calcText+k;
+  document.getElementById("calcValue").textContent=calcText;
 });
-
-document.getElementById('calculatorDialog').addEventListener('cancel', event => {
-  event.preventDefault();
-  closeCalculator(false);
-});
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
-}
-
+document.getElementById("calculatorDialog").addEventListener("cancel",e=>{e.preventDefault();closeCalc(false)});
+if("serviceWorker"in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(console.error));
 render();
