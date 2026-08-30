@@ -12,3 +12,25 @@
 .totals-company-table tbody th{background:#f7faf8;font-weight:700}
 .totals-company-table td{background:#fff;font-weight:700}
 .totals-company-table .income-row td{font-size:12px;font-weight:800}
+
+/* Compact iPhone layout: all 4 players × (uma + score) fit without horizontal scrolling. */
+@media (max-width: 699px) {
+  .app-main { padding: 10px 8px 170px; }
+  .card { padding: 12px; border-radius: 14px; }
+  .section-title { font-size: 18px; margin-bottom: 10px; }
+  .name-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .name-grid input { min-width: 0; padding: 9px 6px; font-size: 14px; text-align: center; }
+  .table-wrap { overflow-x: hidden; }
+  .score-table, .company-table { width: 100%; min-width: 0; table-layout: fixed; }
+  .score-table th { padding: 6px 1px; font-size: 10px; }
+  .score-table .row-label, .company-table .row-label { width: 34px; }
+  .company-table th { padding: 5px 1px; font-size: 10px; }
+  .company-table .subhead { font-size: 9px; }
+  .cell-btn, .company-table .cell-btn { min-height: 42px; padding: 5px 0; font-size: 13px; }
+  .totals-company-table { font-size: 10px; }
+  .totals-company-table th, .totals-company-table td { padding: 4px 1px; }
+  .totals-company-table .income-row td { font-size: 11px; }
+  .totals-company-table .total-label-head { width: 40px; }
+  .totals-sticky { padding-left: 8px; padding-right: 8px; }
+  .calc-value { font-size: 38px; }
+}
