@@ -218,7 +218,7 @@ function renderMatches() {
   const rows = state.matches.map((row, matchIndex) => {
     normalizeRow(row, count, false);
     const cells = names.map((_, playerIndex) =>
-      `<td><button class="cell-btn" data-mi="${matchIndex}" data-pi="${playerIndex}" data-kind="scores">${row.scores[playerIndex] === '' ? '—' : formatNumber(row.scores[playerIndex])}</button></td>`
+      `<td><button class="cell-btn" data-mi="${matchIndex}" data-pi="${playerIndex}" data-kind="scores">${row.scores[playerIndex] === '' ? '' : formatNumber(row.scores[playerIndex])}</button></td>`
     ).join('');
     return `<tr><th class="row-label">${matchIndex + 1}</th>${cells}</tr>`;
   }).join('');
